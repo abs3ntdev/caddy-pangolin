@@ -1,11 +1,12 @@
 FROM caddy:builder-alpine AS builder
 
 ARG CADDY_VERSION=v2.11.4
-ARG PLUGIN_REF=main
+
+COPY . /src/caddy-pangolin
 
 RUN xcaddy build "${CADDY_VERSION}" \
     --output /caddy \
-    --with github.com/abs3ntdev/caddy-pangolin@${PLUGIN_REF} \
+    --with github.com/abs3ntdev/caddy-pangolin=/src/caddy-pangolin \
     --with github.com/caddy-dns/cloudflare \
     --with github.com/mholt/caddy-ratelimit
 

@@ -67,7 +67,6 @@ jobs:
           pull: true
           build-args: |
             CADDY_VERSION=${{ steps.caddy.outputs.version }}
-            PLUGIN_REF=${{ github.sha }}
             BASE_DIGEST=${{ steps.check.outputs.base_digest }}
           tags: |
             ${{ env.IMAGE }}:latest
