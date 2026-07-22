@@ -1,0 +1,76 @@
+name: docker
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["README.md"]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/caddy-pangolin
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if rebuild is needed
+        id: check
+        run: |
+          BASE_DIGEST=$(docker buildx imagetools inspect ghcr.io/hotio/caddy:latest --format '{{json .Manifest}}' | jq -r '.digest')
+          echo "base_digest=$BASE_DIGEST" >> "$GITHUB_OUTPUT"
+
+          CURRENT=$(docker buildx imagetools inspect "$IMAGE:latest" \
+            --format '{{ index (index .Image "config") "Labels" "io.abs3ntdev.base-digest" }}' 2>/dev/null || echo "none")
+          echo "current base: $CURRENT"
+          echo "hotio base:   $BASE_DIGEST"
+
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "$CURRENT" != "$BASE_DIGEST" ]; then
+            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rebuild=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get hotio caddy version
+        id: caddy
+        if: steps.check.outputs.rebuild == 'true'
+        run: |
+          docker pull -q ghcr.io/hotio/caddy:latest
+          VERSION=$(docker run --rm --entrypoint /app/caddy ghcr.io/hotio/caddy:latest version | awk '{print $1}')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "caddy version: $VERSION"
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.rebuild == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        if: steps.check.outputs.rebuild == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          pull: true
+          build-args: |
+            CADDY_VERSION=${{ steps.caddy.outputs.version }}
+            PLUGIN_REF=${{ github.sha }}
+            BASE_DIGEST=${{ steps.check.outputs.base_digest }}
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.caddy.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
