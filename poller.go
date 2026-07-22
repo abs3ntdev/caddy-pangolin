@@ -224,7 +224,7 @@ func (p *poller) fetch(ctx context.Context) (*snapshot, error) {
 		if !r.Enabled || r.FullDomain == "" {
 			continue
 		}
-		if r.Mode != "" && r.Mode != "host" && r.Mode != "path" {
+		if r.Mode != "" && r.Mode != "http" {
 			continue
 		}
 		var entry resourceEntry
