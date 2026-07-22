@@ -22,6 +22,10 @@ type backend struct {
 
 type resourceEntry struct {
 	Backends []backend
+	// Remote is true when at least one enabled target exists on a site
+	// not included in the configured sites filter (i.e. not locally
+	// reachable; should be routed through Pangolin instead).
+	Remote bool
 }
 
 type snapshot struct {
@@ -76,10 +80,26 @@ type Config struct {
 	OrgID              string
 	Refresh            time.Duration
 	InsecureSkipVerify bool
+	// Sites restricts which Pangolin sites' targets are considered locally
+	// reachable. Matches site name or niceId, case-insensitive. Empty means
+	// all sites are considered local.
+	Sites []string
+}
+
+func (c Config) siteAllowed(name, niceID string) bool {
+	if len(c.Sites) == 0 {
+		return true
+	}
+	for _, s := range c.Sites {
+		if strings.EqualFold(s, name) || strings.EqualFold(s, niceID) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c Config) key() string {
-	return fmt.Sprintf("%s|%s|%s|%s|%v", c.Endpoint, c.APIKey, c.OrgID, c.Refresh, c.InsecureSkipVerify)
+	return fmt.Sprintf("%s|%s|%s|%s|%v|%s", c.Endpoint, c.APIKey, c.OrgID, c.Refresh, c.InsecureSkipVerify, strings.Join(c.Sites, ","))
 }
 
 func getPoller(ctx caddy.Context, cfg Config) (*poller, error) {
@@ -175,10 +195,12 @@ type apiResource struct {
 	Wildcard   bool   `json:"wildcard"`
 	Mode       string `json:"mode"`
 	Targets    []struct {
-		TargetID int    `json:"targetId"`
-		IP       string `json:"ip"`
-		Port     int    `json:"port"`
-		Enabled  bool   `json:"enabled"`
+		TargetID   int    `json:"targetId"`
+		IP         string `json:"ip"`
+		Port       int    `json:"port"`
+		Enabled    bool   `json:"enabled"`
+		SiteName   string `json:"siteName"`
+		SiteNiceID string `json:"siteNiceId"`
 	} `json:"targets"`
 }
 
@@ -232,12 +254,16 @@ func (p *poller) fetch(ctx context.Context) (*snapshot, error) {
 			if !t.Enabled || t.IP == "" || t.Port == 0 {
 				continue
 			}
+			if !p.cfg.siteAllowed(t.SiteName, t.SiteNiceID) {
+				entry.Remote = true
+				continue
+			}
 			entry.Backends = append(entry.Backends, backend{
 				Dial:  fmt.Sprintf("%s:%d", t.IP, t.Port),
 				HTTPS: methods[t.TargetID] == "https",
 			})
 		}
-		if len(entry.Backends) == 0 {
+		if len(entry.Backends) == 0 && !entry.Remote {
 			continue
 		}
 		host := strings.ToLower(r.FullDomain)

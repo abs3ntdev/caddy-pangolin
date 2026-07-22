@@ -87,7 +87,47 @@ traffic stays local; external traffic still flows through Pangolin on the VPS.
 | `api_key` | yes | API key as `<id>.<secret>`; placeholders like `{env.X}` supported |
 | `org_id` | yes | Pangolin organization ID |
 | `refresh` | no | Poll interval (default `60s`) |
+| `sites` | no | Site names or niceIds whose targets are locally reachable; targets on other sites are treated as remote (default: all sites local) |
 | `insecure_skip_verify` | no | Skip TLS verification when talking to the Pangolin API |
+
+## Remote sites
+
+If your Pangolin org has resources on sites that are not on this LAN, their
+targets are not reachable by the local Caddy. Set `sites` to the site(s) local
+to this Caddy instance, and use the `pangolin_remote` matcher to send
+everything else back through the public Pangolin instance:
+
+```caddyfile
+(pangolin_cfg) {
+	endpoint https://pangolin-api.example.com
+	api_key {env.PANGOLIN_API_KEY}
+	org_id default
+	sites Home
+}
+
+*.example.com {
+	@remote pangolin_remote {
+		import pangolin_cfg
+	}
+	reverse_proxy @remote https://<vps-ip> {
+		transport http {
+			tls
+			tls_server_name {http.request.host}
+		}
+	}
+
+	reverse_proxy {
+		dynamic pangolin {
+			import pangolin_cfg
+		}
+	}
+}
+```
+
+`pangolin_remote` matches hosts that exist in Pangolin but have no locally
+reachable targets. Requests are proxied to Pangolin's edge with SNI set to the
+original host so traefik routes and terminates them normally (auth rules
+included, since the request goes through the real Pangolin path).
 
 ## Behavior notes
 

@@ -35,3 +35,19 @@ func TestSnapshotLookup(t *testing.T) {
 		}
 	}
 }
+
+func TestSiteAllowed(t *testing.T) {
+	c := Config{Sites: []string{"Home"}}
+	if !c.siteAllowed("Home", "parallel-giant-pangolin") {
+		t.Fatal("name match failed")
+	}
+	if !c.siteAllowed("Other", "home") {
+		t.Fatal("niceId match should be case-insensitive")
+	}
+	if c.siteAllowed("Remote", "other-site") {
+		t.Fatal("should not match")
+	}
+	if !(Config{}).siteAllowed("Any", "any") {
+		t.Fatal("empty filter should allow all")
+	}
+}
