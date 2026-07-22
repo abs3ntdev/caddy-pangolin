@@ -1,0 +1,37 @@
+package caddypangolin
+
+import "testing"
+
+func TestSnapshotLookup(t *testing.T) {
+	snap := &snapshot{
+		exact: map[string]resourceEntry{
+			"plex.asdf.cafe": {Backends: []backend{{Dial: "plex:32400"}}},
+			"abs3nt.dev":     {Backends: []backend{{Dial: "abs3nt:80"}}},
+		},
+		wildcard: map[string]resourceEntry{
+			"wild.asdf.cafe": {Backends: []backend{{Dial: "wild:80"}}},
+		},
+	}
+
+	cases := []struct {
+		host string
+		want string
+		ok   bool
+	}{
+		{"plex.asdf.cafe", "plex:32400", true},
+		{"PLEX.asdf.cafe:8443", "plex:32400", true},
+		{"plex.asdf.cafe.", "plex:32400", true},
+		{"abs3nt.dev", "abs3nt:80", true},
+		{"foo.wild.asdf.cafe", "wild:80", true},
+		{"missing.asdf.cafe", "", false},
+	}
+	for _, c := range cases {
+		e, ok := snap.lookup(c.host)
+		if ok != c.ok {
+			t.Fatalf("lookup(%q) ok=%v want %v", c.host, ok, c.ok)
+		}
+		if ok && e.Backends[0].Dial != c.want {
+			t.Fatalf("lookup(%q) = %q want %q", c.host, e.Backends[0].Dial, c.want)
+		}
+	}
+}
