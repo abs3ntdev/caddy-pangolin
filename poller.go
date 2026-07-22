@@ -134,19 +134,13 @@ func newPoller(cfg Config, logger *zap.Logger) *poller {
 		transport.TLSClientConfig.InsecureSkipVerify = true
 	}
 	if len(cfg.Resolvers) > 0 {
-		addrs := make([]string, 0, len(cfg.Resolvers))
-		for _, r := range cfg.Resolvers {
-			if _, _, err := net.SplitHostPort(r); err != nil {
-				r = net.JoinHostPort(r, "53")
-			}
-			addrs = append(addrs, r)
-		}
+		transport.Proxy = nil
 		resolver := &net.Resolver{
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
 				var d net.Dialer
 				var lastErr error
-				for _, addr := range addrs {
+				for _, addr := range cfg.Resolvers {
 					conn, err := d.DialContext(ctx, network, addr)
 					if err == nil {
 						return conn, nil

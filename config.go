@@ -2,6 +2,9 @@ package caddypangolin
 
 import (
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -52,8 +55,12 @@ func (m *ModuleConfig) provision(ctx caddy.Context) error {
 	for _, s := range m.Sites {
 		cfg.Sites = append(cfg.Sites, repl.ReplaceAll(s, ""))
 	}
-	for _, r := range m.Resolvers {
-		cfg.Resolvers = append(cfg.Resolvers, repl.ReplaceAll(r, ""))
+	for _, raw := range m.Resolvers {
+		r, err := normalizeResolver(repl.ReplaceAll(raw, ""))
+		if err != nil {
+			return fmt.Errorf("invalid resolver %q: %w", raw, err)
+		}
+		cfg.Resolvers = append(cfg.Resolvers, r)
 	}
 	if cfg.Endpoint == "" {
 		return fmt.Errorf("endpoint is required")
@@ -71,6 +78,25 @@ func (m *ModuleConfig) provision(ctx caddy.Context) error {
 	var err error
 	m.poller, err = getPoller(ctx, cfg)
 	return err
+}
+
+func normalizeResolver(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("address is empty")
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err != nil {
+		return net.JoinHostPort(value, "53"), nil
+	}
+	if host == "" {
+		return "", fmt.Errorf("host is empty")
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("port must be between 1 and 65535")
+	}
+	return net.JoinHostPort(host, port), nil
 }
 
 func (m *ModuleConfig) cleanup() error {

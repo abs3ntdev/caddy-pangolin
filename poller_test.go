@@ -52,6 +52,29 @@ func TestSiteAllowed(t *testing.T) {
 	}
 }
 
+func TestNormalizeResolver(t *testing.T) {
+	cases := map[string]string{
+		"1.1.1.1":              "1.1.1.1:53",
+		"1.1.1.1:5353":         "1.1.1.1:5353",
+		"2606:4700:4700::1111": "[2606:4700:4700::1111]:53",
+		"dns.example.com":      "dns.example.com:53",
+	}
+	for input, want := range cases {
+		got, err := normalizeResolver(input)
+		if err != nil {
+			t.Fatalf("normalizeResolver(%q): %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("normalizeResolver(%q) = %q, want %q", input, got, want)
+		}
+	}
+	for _, input := range []string{"", " ", "1.1.1.1:0", "1.1.1.1:bad"} {
+		if _, err := normalizeResolver(input); err == nil {
+			t.Fatalf("normalizeResolver(%q) succeeded", input)
+		}
+	}
+}
+
 func TestCacheRoundTrip(t *testing.T) {
 	snap := &snapshot{
 		exact: map[string]resourceEntry{

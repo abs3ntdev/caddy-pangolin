@@ -83,3 +83,19 @@ func TestOfflineStartFromCache(t *testing.T) {
 		t.Fatalf("remote flag lost in cache: %+v ok=%v", e, ok)
 	}
 }
+
+func TestCustomResolversDisableEnvironmentProxy(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+	cfg := Config{
+		Endpoint:  "https://one.one.one.one",
+		APIKey:    "id.secret",
+		OrgID:     "default",
+		Refresh:   time.Hour,
+		Resolvers: []string{"1.1.1.1:53"},
+	}
+	p := newPoller(cfg, zap.NewNop())
+	transport := p.client.Transport.(*http.Transport)
+	if transport.Proxy != nil {
+		t.Fatal("environment proxy remains enabled with custom resolvers")
+	}
+}
