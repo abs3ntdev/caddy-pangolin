@@ -88,6 +88,7 @@ traffic stays local; external traffic still flows through Pangolin on the VPS.
 | `org_id` | yes | Pangolin organization ID |
 | `refresh` | no | Poll interval (default `60s`) |
 | `sites` | no | Site names or niceIds whose targets are locally reachable; targets on other sites are treated as remote (default: all sites local) |
+| `resolvers` | no | DNS server addresses (port 53 assumed) used to resolve the Pangolin endpoint instead of the system resolver — set this when split-horizon DNS would resolve the endpoint back to this Caddy instance |
 | `insecure_skip_verify` | no | Skip TLS verification when talking to the Pangolin API |
 
 ## Remote sites

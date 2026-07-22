@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -85,6 +86,11 @@ type Config struct {
 	// reachable. Matches site name or niceId, case-insensitive. Empty means
 	// all sites are considered local.
 	Sites []string
+	// Resolvers are DNS server addresses used to resolve the Pangolin
+	// endpoint, bypassing the system resolver (useful with split-horizon
+	// DNS where the endpoint hostname would resolve back to this Caddy).
+	// Port 53 is assumed if not specified. Empty means system resolver.
+	Resolvers []string
 }
 
 func (c Config) siteAllowed(name, niceID string) bool {
@@ -100,7 +106,7 @@ func (c Config) siteAllowed(name, niceID string) bool {
 }
 
 func (c Config) key() string {
-	return fmt.Sprintf("%s|%s|%s|%s|%v|%s", c.Endpoint, c.APIKey, c.OrgID, c.Refresh, c.InsecureSkipVerify, strings.Join(c.Sites, ","))
+	return fmt.Sprintf("%s|%s|%s|%s|%v|%s|%s", c.Endpoint, c.APIKey, c.OrgID, c.Refresh, c.InsecureSkipVerify, strings.Join(c.Sites, ","), strings.Join(c.Resolvers, ","))
 }
 
 func getPoller(ctx caddy.Context, cfg Config) (*poller, error) {
@@ -126,6 +132,32 @@ func newPoller(cfg Config, logger *zap.Logger) *poller {
 			transport.TLSClientConfig = &tls.Config{}
 		}
 		transport.TLSClientConfig.InsecureSkipVerify = true
+	}
+	if len(cfg.Resolvers) > 0 {
+		addrs := make([]string, 0, len(cfg.Resolvers))
+		for _, r := range cfg.Resolvers {
+			if _, _, err := net.SplitHostPort(r); err != nil {
+				r = net.JoinHostPort(r, "53")
+			}
+			addrs = append(addrs, r)
+		}
+		resolver := &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				var d net.Dialer
+				var lastErr error
+				for _, addr := range addrs {
+					conn, err := d.DialContext(ctx, network, addr)
+					if err == nil {
+						return conn, nil
+					}
+					lastErr = err
+				}
+				return nil, lastErr
+			},
+		}
+		dialer := &net.Dialer{Timeout: 10 * time.Second, Resolver: resolver}
+		transport.DialContext = dialer.DialContext
 	}
 	return &poller{
 		cfg:    cfg,

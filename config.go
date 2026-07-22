@@ -31,6 +31,11 @@ type ModuleConfig struct {
 	// Empty means all sites are local.
 	Sites []string `json:"sites,omitempty"`
 
+	// Resolvers are DNS server addresses (port 53 assumed) used to resolve
+	// the Pangolin endpoint instead of the system resolver. Set this when
+	// split-horizon DNS would resolve the endpoint back to this Caddy.
+	Resolvers []string `json:"resolvers,omitempty"`
+
 	cfg    Config
 	poller *poller
 }
@@ -46,6 +51,9 @@ func (m *ModuleConfig) provision(ctx caddy.Context) error {
 	}
 	for _, s := range m.Sites {
 		cfg.Sites = append(cfg.Sites, repl.ReplaceAll(s, ""))
+	}
+	for _, r := range m.Resolvers {
+		cfg.Resolvers = append(cfg.Resolvers, repl.ReplaceAll(r, ""))
 	}
 	if cfg.Endpoint == "" {
 		return fmt.Errorf("endpoint is required")
@@ -114,6 +122,12 @@ func (m *ModuleConfig) unmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.ArgErr()
 			}
 			m.Sites = append(m.Sites, args...)
+		case "resolvers":
+			args := d.RemainingArgs()
+			if len(args) == 0 {
+				return d.ArgErr()
+			}
+			m.Resolvers = append(m.Resolvers, args...)
 		case "insecure_skip_verify":
 			if d.NextArg() {
 				return d.ArgErr()
