@@ -1,10 +1,11 @@
-FROM caddy:builder-alpine AS builder
+FROM --platform=$BUILDPLATFORM caddy:builder-alpine AS builder
 
 ARG CADDY_VERSION=v2.11.4
+ARG TARGETARCH
 
 COPY . /src/caddy-pangolin
 
-RUN xcaddy build "${CADDY_VERSION}" \
+RUN GOARCH=${TARGETARCH} xcaddy build "${CADDY_VERSION}" \
     --output /caddy \
     --with github.com/abs3ntdev/caddy-pangolin=/src/caddy-pangolin \
     --with github.com/caddy-dns/cloudflare \

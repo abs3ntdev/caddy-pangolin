@@ -2,15 +2,20 @@ package caddypangolin
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -33,6 +38,18 @@ type resourceEntry struct {
 type snapshot struct {
 	exact    map[string]resourceEntry
 	wildcard map[string]resourceEntry
+}
+
+func (s *snapshot) equal(other *snapshot) bool {
+	if other == nil {
+		return false
+	}
+	return maps.EqualFunc(s.exact, other.exact, entryEqual) &&
+		maps.EqualFunc(s.wildcard, other.wildcard, entryEqual)
+}
+
+func entryEqual(a, b resourceEntry) bool {
+	return a.Remote == b.Remote && slices.Equal(a.Backends, b.Backends)
 }
 
 func (s *snapshot) lookup(host string) (resourceEntry, bool) {
@@ -71,6 +88,9 @@ type poller struct {
 
 	mu   sync.RWMutex
 	snap *snapshot
+
+	lastResourceHash string
+	lastMethods      map[int]string
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -212,11 +232,20 @@ func (p *poller) refresh(ctx context.Context) {
 		return
 	}
 	p.mu.Lock()
+	changed := !snap.equal(p.snap)
 	p.snap = snap
 	p.mu.Unlock()
-	p.logger.Info("refreshed pangolin resources",
+	logFn := p.logger.Debug
+	if changed {
+		logFn = p.logger.Info
+	}
+	logFn("refreshed pangolin resources",
 		zap.Int("hosts", len(snap.exact)),
-		zap.Int("wildcards", len(snap.wildcard)))
+		zap.Int("wildcards", len(snap.wildcard)),
+		zap.Bool("changed", changed))
+	if !changed {
+		return
+	}
 	if err := saveSnapshotToDisk(p.cfg.cachePath(), snap); err != nil {
 		p.logger.Warn("failed to persist pangolin resource cache", zap.Error(err))
 	}
@@ -236,12 +265,14 @@ type apiResource struct {
 	Wildcard   bool   `json:"wildcard"`
 	Mode       string `json:"mode"`
 	Targets    []struct {
-		TargetID   int    `json:"targetId"`
-		IP         string `json:"ip"`
-		Port       int    `json:"port"`
-		Enabled    bool   `json:"enabled"`
-		SiteName   string `json:"siteName"`
-		SiteNiceID string `json:"siteNiceId"`
+		TargetID     int    `json:"targetId"`
+		IP           string `json:"ip"`
+		Port         int    `json:"port"`
+		Enabled      bool   `json:"enabled"`
+		SiteName     string `json:"siteName"`
+		SiteNiceID   string `json:"siteNiceId"`
+		HealthStatus string `json:"healthStatus"`
+		HcEnabled    bool   `json:"hcEnabled"`
 	} `json:"targets"`
 }
 
@@ -277,7 +308,7 @@ func (p *poller) fetch(ctx context.Context) (*snapshot, error) {
 		page++
 	}
 
-	methods := p.fetchTargetMethods(ctx, all)
+	methods := p.targetMethods(ctx, all)
 
 	snap := &snapshot{
 		exact:    make(map[string]resourceEntry),
@@ -291,6 +322,7 @@ func (p *poller) fetch(ctx context.Context) (*snapshot, error) {
 			continue
 		}
 		var entry resourceEntry
+		var healthy []backend
 		for _, t := range r.Targets {
 			if !t.Enabled || t.IP == "" || t.Port == 0 {
 				continue
@@ -299,10 +331,17 @@ func (p *poller) fetch(ctx context.Context) (*snapshot, error) {
 				entry.Remote = true
 				continue
 			}
-			entry.Backends = append(entry.Backends, backend{
+			b := backend{
 				Dial:  fmt.Sprintf("%s:%d", t.IP, t.Port),
 				HTTPS: methods[t.TargetID] == "https",
-			})
+			}
+			entry.Backends = append(entry.Backends, b)
+			if !t.HcEnabled || t.HealthStatus != "unhealthy" {
+				healthy = append(healthy, b)
+			}
+		}
+		if len(healthy) > 0 && len(healthy) < len(entry.Backends) {
+			entry.Backends = healthy
 		}
 		if len(entry.Backends) == 0 && !entry.Remote {
 			continue
@@ -319,8 +358,32 @@ func (p *poller) fetch(ctx context.Context) (*snapshot, error) {
 	return snap, nil
 }
 
-func (p *poller) fetchTargetMethods(ctx context.Context, resources []apiResource) map[int]string {
+// targetMethods returns the http/https method per target, fetching from the
+// API only when the set of targets changed since the last poll. Health-status
+// changes alone do not trigger a refetch.
+func (p *poller) targetMethods(ctx context.Context, resources []apiResource) map[int]string {
+	h := sha256.New()
+	for _, r := range resources {
+		fmt.Fprintf(h, "%d|", r.ResourceID)
+		for _, t := range r.Targets {
+			fmt.Fprintf(h, "%d:%s:%d:%v|", t.TargetID, t.IP, t.Port, t.Enabled)
+		}
+	}
+	hash := hex.EncodeToString(h.Sum(nil))
+	if hash == p.lastResourceHash && p.lastMethods != nil {
+		return p.lastMethods
+	}
+	methods, complete := p.fetchTargetMethods(ctx, resources)
+	if complete {
+		p.lastResourceHash = hash
+		p.lastMethods = methods
+	}
+	return methods
+}
+
+func (p *poller) fetchTargetMethods(ctx context.Context, resources []apiResource) (map[int]string, bool) {
 	methods := make(map[int]string)
+	var failed atomic.Bool
 	var mu sync.Mutex
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
@@ -339,6 +402,7 @@ func (p *poller) fetchTargetMethods(ctx context.Context, resources []apiResource
 			path := fmt.Sprintf("/v1/resource/%d/targets?limit=1000", id)
 			if err := p.get(ctx, path, &out); err != nil {
 				p.logger.Warn("failed to fetch targets", zap.Int("resourceId", id), zap.Error(err))
+				failed.Store(true)
 				return
 			}
 			mu.Lock()
@@ -349,7 +413,7 @@ func (p *poller) fetchTargetMethods(ctx context.Context, resources []apiResource
 		}(r.ResourceID)
 	}
 	wg.Wait()
-	return methods
+	return methods, !failed.Load()
 }
 
 func (p *poller) get(ctx context.Context, path string, out any) error {

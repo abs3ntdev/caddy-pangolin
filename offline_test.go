@@ -1,9 +1,11 @@
 package caddypangolin
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,5 +99,67 @@ func TestCustomResolversDisableEnvironmentProxy(t *testing.T) {
 	transport := p.client.Transport.(*http.Transport)
 	if transport.Proxy != nil {
 		t.Fatal("environment proxy remains enabled with custom resolvers")
+	}
+}
+
+func TestTargetFetchSkippedWhenUnchanged(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	var targetCalls atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/org/default/resources", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"success":true,"data":{"resources":[
+			{"resourceId":1,"name":"Plex","fullDomain":"plex.asdf.cafe","enabled":true,"mode":"http",
+			 "targets":[{"targetId":10,"ip":"plex","port":32400,"enabled":true,"siteName":"Home","siteNiceId":"home"}]}
+		],"pagination":{"total":1,"page":1,"pageSize":100}}}`)
+	})
+	mux.HandleFunc("/v1/resource/1/targets", func(w http.ResponseWriter, _ *http.Request) {
+		targetCalls.Add(1)
+		fmt.Fprint(w, `{"success":true,"data":{"targets":[{"targetId":10,"ip":"plex","port":32400,"method":"http","enabled":true}]}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	p := newPoller(Config{Endpoint: srv.URL, APIKey: "id.secret", OrgID: "default", Refresh: time.Hour}, zap.NewNop())
+	ctx := context.Background()
+	p.refresh(ctx)
+	p.refresh(ctx)
+	p.refresh(ctx)
+	if got := targetCalls.Load(); got != 1 {
+		t.Fatalf("target endpoint called %d times, want 1", got)
+	}
+}
+
+func TestUnhealthyTargetsFiltered(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/org/default/resources", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"success":true,"data":{"resources":[
+			{"resourceId":1,"name":"App","fullDomain":"app.asdf.cafe","enabled":true,"mode":"http","targets":[
+				{"targetId":10,"ip":"app1","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home","hcEnabled":true,"healthStatus":"unhealthy"},
+				{"targetId":11,"ip":"app2","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home","hcEnabled":true,"healthStatus":"healthy"}
+			]},
+			{"resourceId":2,"name":"Down","fullDomain":"down.asdf.cafe","enabled":true,"mode":"http","targets":[
+				{"targetId":20,"ip":"down1","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home","hcEnabled":true,"healthStatus":"unhealthy"}
+			]}
+		],"pagination":{"total":2,"page":1,"pageSize":100}}}`)
+	})
+	mux.HandleFunc("/v1/resource/", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"success":true,"data":{"targets":[]}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	p := newPoller(Config{Endpoint: srv.URL, APIKey: "id.secret", OrgID: "default", Refresh: time.Hour}, zap.NewNop())
+	snap, err := p.fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := snap.lookup("app.asdf.cafe")
+	if !ok || len(e.Backends) != 1 || e.Backends[0].Dial != "app2:80" {
+		t.Fatalf("unhealthy target not filtered: %+v", e)
+	}
+	e, ok = snap.lookup("down.asdf.cafe")
+	if !ok || len(e.Backends) != 1 {
+		t.Fatalf("all-unhealthy resource should keep its backends: %+v ok=%v", e, ok)
 	}
 }

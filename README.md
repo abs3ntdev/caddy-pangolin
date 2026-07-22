@@ -150,6 +150,15 @@ cache rather than reusing a stale one.
 
 - Only enabled resources with enabled targets are mapped; disabled ones 404
   through your normal fallback.
+- Pangolin health checks are respected: targets marked unhealthy are removed
+  from rotation while at least one healthy target remains. If every target of
+  a resource is unhealthy, they are all kept (failing loudly beats hiding the
+  resource).
+- Polling is cheap in steady state: the per-resource target details (http vs
+  https method) are only refetched when the resource/target topology changes,
+  so an idle org costs one API request per refresh interval.
+- Refreshes only log at INFO level when the resource map actually changed;
+  unchanged polls log at DEBUG.
 - Wildcard resources (`*.example.com`) match any single-level subdomain.
 - Multiple enabled targets become multiple upstreams and use the
   `reverse_proxy` load balancing policy you configure.
