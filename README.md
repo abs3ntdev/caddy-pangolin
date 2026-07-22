@@ -22,7 +22,7 @@ serving. Pollers are shared between modules with identical config.
 
 ```sh
 xcaddy build \
-  --with github.com/abs3nt/caddy-pangolin \
+  --with github.com/abs3ntdev/caddy-pangolin \
   --with github.com/caddy-dns/cloudflare
 ```
 

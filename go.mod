@@ -1,4 +1,4 @@
-module github.com/abs3nt/caddy-pangolin
+module github.com/abs3ntdev/caddy-pangolin
 
 go 1.25.1
 
