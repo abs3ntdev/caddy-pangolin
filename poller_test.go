@@ -5,11 +5,11 @@ import "testing"
 func TestSnapshotLookup(t *testing.T) {
 	snap := &snapshot{
 		exact: map[string]resourceEntry{
-			"plex.asdf.cafe": {Backends: []backend{{Dial: "plex:32400"}}},
-			"abs3nt.dev":     {Backends: []backend{{Dial: "abs3nt:80"}}},
+			"plex.example.com": {Backends: []backend{{Dial: "plex:32400"}}},
+			"example.org":      {Backends: []backend{{Dial: "apex:80"}}},
 		},
 		wildcard: map[string]resourceEntry{
-			"wild.asdf.cafe": {Backends: []backend{{Dial: "wild:80"}}},
+			"wild.example.com": {Backends: []backend{{Dial: "wild:80"}}},
 		},
 	}
 
@@ -18,12 +18,12 @@ func TestSnapshotLookup(t *testing.T) {
 		want string
 		ok   bool
 	}{
-		{"plex.asdf.cafe", "plex:32400", true},
-		{"PLEX.asdf.cafe:8443", "plex:32400", true},
-		{"plex.asdf.cafe.", "plex:32400", true},
-		{"abs3nt.dev", "abs3nt:80", true},
-		{"foo.wild.asdf.cafe", "wild:80", true},
-		{"missing.asdf.cafe", "", false},
+		{"plex.example.com", "plex:32400", true},
+		{"PLEX.example.com:8443", "plex:32400", true},
+		{"plex.example.com.", "plex:32400", true},
+		{"example.org", "apex:80", true},
+		{"foo.wild.example.com", "wild:80", true},
+		{"missing.example.com", "", false},
 	}
 	for _, c := range cases {
 		e, ok := snap.lookup(c.host)
@@ -78,12 +78,12 @@ func TestNormalizeResolver(t *testing.T) {
 func TestCacheRoundTrip(t *testing.T) {
 	snap := &snapshot{
 		exact: map[string]resourceEntry{
-			"plex.asdf.cafe":  {Backends: []backend{{Dial: "plex:32400"}}},
-			"cloud.asdf.cafe": {Backends: []backend{{Dial: "nextcloud:443", HTTPS: true}}},
-			"far.asdf.cafe":   {Remote: true},
+			"plex.example.com":  {Backends: []backend{{Dial: "plex:32400"}}},
+			"cloud.example.com": {Backends: []backend{{Dial: "nextcloud:443", HTTPS: true}}},
+			"far.example.com":   {Remote: true},
 		},
 		wildcard: map[string]resourceEntry{
-			"wild.asdf.cafe": {Backends: []backend{{Dial: "wild:80"}}},
+			"wild.example.com": {Backends: []backend{{Dial: "wild:80"}}},
 		},
 	}
 	path := t.TempDir() + "/cache.json"
@@ -94,15 +94,15 @@ func TestCacheRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, ok := got.lookup("cloud.asdf.cafe")
+	e, ok := got.lookup("cloud.example.com")
 	if !ok || !e.Backends[0].HTTPS || e.Backends[0].Dial != "nextcloud:443" {
 		t.Fatalf("bad https entry: %+v ok=%v", e, ok)
 	}
-	e, ok = got.lookup("far.asdf.cafe")
+	e, ok = got.lookup("far.example.com")
 	if !ok || !e.Remote || len(e.Backends) != 0 {
 		t.Fatalf("bad remote entry: %+v ok=%v", e, ok)
 	}
-	if e, ok = got.lookup("sub.wild.asdf.cafe"); !ok || e.Backends[0].Dial != "wild:80" {
+	if e, ok = got.lookup("sub.wild.example.com"); !ok || e.Backends[0].Dial != "wild:80" {
 		t.Fatalf("bad wildcard entry: %+v ok=%v", e, ok)
 	}
 }

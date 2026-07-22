@@ -20,11 +20,11 @@ func fakePangolin(t *testing.T) *httptest.Server {
 			return
 		}
 		fmt.Fprint(w, `{"success":true,"data":{"resources":[
-			{"resourceId":1,"name":"Plex","fullDomain":"plex.asdf.cafe","enabled":true,"mode":"http",
+			{"resourceId":1,"name":"Plex","fullDomain":"plex.example.com","enabled":true,"mode":"http",
 			 "targets":[{"targetId":10,"ip":"plex","port":32400,"enabled":true,"siteName":"Home","siteNiceId":"home-nice"}]},
-			{"resourceId":2,"name":"Cloud","fullDomain":"cloud.asdf.cafe","enabled":true,"mode":"http",
+			{"resourceId":2,"name":"Cloud","fullDomain":"cloud.example.com","enabled":true,"mode":"http",
 			 "targets":[{"targetId":20,"ip":"nextcloud","port":443,"enabled":true,"siteName":"Home","siteNiceId":"home-nice"}]},
-			{"resourceId":3,"name":"Far","fullDomain":"far.asdf.cafe","enabled":true,"mode":"http",
+			{"resourceId":3,"name":"Far","fullDomain":"far.example.com","enabled":true,"mode":"http",
 			 "targets":[{"targetId":30,"ip":"far","port":80,"enabled":true,"siteName":"Other","siteNiceId":"other-nice"}]}
 		],"pagination":{"total":3,"page":1,"pageSize":100}}}`)
 	})
@@ -75,13 +75,13 @@ func TestOfflineStartFromCache(t *testing.T) {
 	if snap == nil {
 		t.Fatal("no snapshot loaded from cache with API offline")
 	}
-	if e, ok := snap.lookup("plex.asdf.cafe"); !ok || e.Backends[0].Dial != "plex:32400" {
+	if e, ok := snap.lookup("plex.example.com"); !ok || e.Backends[0].Dial != "plex:32400" {
 		t.Fatalf("plex not served from cache: %+v ok=%v", e, ok)
 	}
-	if e, ok := snap.lookup("cloud.asdf.cafe"); !ok || !e.Backends[0].HTTPS {
+	if e, ok := snap.lookup("cloud.example.com"); !ok || !e.Backends[0].HTTPS {
 		t.Fatalf("cloud https flag lost in cache: %+v ok=%v", e, ok)
 	}
-	if e, ok := snap.lookup("far.asdf.cafe"); !ok || !e.Remote {
+	if e, ok := snap.lookup("far.example.com"); !ok || !e.Remote {
 		t.Fatalf("remote flag lost in cache: %+v ok=%v", e, ok)
 	}
 }
@@ -108,7 +108,7 @@ func TestTargetFetchSkippedWhenUnchanged(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/org/default/resources", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"success":true,"data":{"resources":[
-			{"resourceId":1,"name":"Plex","fullDomain":"plex.asdf.cafe","enabled":true,"mode":"http",
+			{"resourceId":1,"name":"Plex","fullDomain":"plex.example.com","enabled":true,"mode":"http",
 			 "targets":[{"targetId":10,"ip":"plex","port":32400,"enabled":true,"siteName":"Home","siteNiceId":"home"}]}
 		],"pagination":{"total":1,"page":1,"pageSize":100}}}`)
 	})
@@ -134,11 +134,11 @@ func TestUnhealthyTargetsFiltered(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/org/default/resources", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"success":true,"data":{"resources":[
-			{"resourceId":1,"name":"App","fullDomain":"app.asdf.cafe","enabled":true,"mode":"http","targets":[
+			{"resourceId":1,"name":"App","fullDomain":"app.example.com","enabled":true,"mode":"http","targets":[
 				{"targetId":10,"ip":"app1","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home","hcEnabled":true,"healthStatus":"unhealthy"},
 				{"targetId":11,"ip":"app2","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home","hcEnabled":true,"healthStatus":"healthy"}
 			]},
-			{"resourceId":2,"name":"Down","fullDomain":"down.asdf.cafe","enabled":true,"mode":"http","targets":[
+			{"resourceId":2,"name":"Down","fullDomain":"down.example.com","enabled":true,"mode":"http","targets":[
 				{"targetId":20,"ip":"down1","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home","hcEnabled":true,"healthStatus":"unhealthy"}
 			]}
 		],"pagination":{"total":2,"page":1,"pageSize":100}}}`)
@@ -154,11 +154,11 @@ func TestUnhealthyTargetsFiltered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, ok := snap.lookup("app.asdf.cafe")
+	e, ok := snap.lookup("app.example.com")
 	if !ok || len(e.Backends) != 1 || e.Backends[0].Dial != "app2:80" {
 		t.Fatalf("unhealthy target not filtered: %+v", e)
 	}
-	e, ok = snap.lookup("down.asdf.cafe")
+	e, ok = snap.lookup("down.example.com")
 	if !ok || len(e.Backends) != 1 {
 		t.Fatalf("all-unhealthy resource should keep its backends: %+v ok=%v", e, ok)
 	}

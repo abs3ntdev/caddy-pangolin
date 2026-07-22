@@ -48,7 +48,7 @@ xcaddy build \
 	refresh 60s
 }
 
-*.asdf.cafe, abs3nt.dev {
+*.example.com, example.org {
 	tls {
 		dns cloudflare {env.CF_API_TOKEN}
 	}
@@ -76,7 +76,7 @@ xcaddy build \
 }
 ```
 
-Point your local DNS wildcard (`*.asdf.cafe`) at this Caddy host and LAN
+Point your local DNS wildcard (`*.example.com`) at this Caddy host and LAN
 traffic stays local; external traffic still flows through Pangolin on the VPS.
 
 ## Options
