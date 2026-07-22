@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -135,6 +136,17 @@ func newPoller(cfg Config, logger *zap.Logger) *poller {
 }
 
 func (p *poller) start() {
+	if snap, err := loadSnapshotFromDisk(p.cfg.cachePath()); err == nil {
+		p.mu.Lock()
+		p.snap = snap
+		p.mu.Unlock()
+		p.logger.Info("loaded cached pangolin resources from disk",
+			zap.String("path", p.cfg.cachePath()),
+			zap.Int("hosts", len(snap.exact)),
+			zap.Int("wildcards", len(snap.wildcard)))
+	} else if !os.IsNotExist(err) {
+		p.logger.Warn("failed to load pangolin resource cache", zap.Error(err))
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 	go func() {
@@ -179,6 +191,9 @@ func (p *poller) refresh(ctx context.Context) {
 	p.logger.Info("refreshed pangolin resources",
 		zap.Int("hosts", len(snap.exact)),
 		zap.Int("wildcards", len(snap.wildcard)))
+	if err := saveSnapshotToDisk(p.cfg.cachePath(), snap); err != nil {
+		p.logger.Warn("failed to persist pangolin resource cache", zap.Error(err))
+	}
 }
 
 type apiEnvelope[T any] struct {

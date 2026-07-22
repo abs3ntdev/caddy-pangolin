@@ -129,6 +129,22 @@ reachable targets. Requests are proxied to Pangolin's edge with SNI set to the
 original host so traefik routes and terminates them normally (auth rules
 included, since the request goes through the real Pangolin path).
 
+## Offline resilience
+
+Every successful sync is persisted to disk under Caddy's data directory
+(`$XDG_DATA_HOME/pangolin/<hash>.json`, i.e. `/config/pangolin/` on hotio).
+On startup the last snapshot is loaded from disk *before* any network call,
+so once the plugin has synced at least once:
+
+- Caddy restarts serve immediately from cache (no 503 window)
+- if the WAN or the Pangolin instance is down, local routing keeps working
+  indefinitely with the last-known resource map
+- the poller keeps retrying in the background and replaces the cache as soon
+  as Pangolin is reachable again
+
+The cache is keyed by endpoint + org + sites, so config changes get a fresh
+cache rather than reusing a stale one.
+
 ## Behavior notes
 
 - Only enabled resources with enabled targets are mapped; disabled ones 404

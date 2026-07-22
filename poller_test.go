@@ -51,3 +51,35 @@ func TestSiteAllowed(t *testing.T) {
 		t.Fatal("empty filter should allow all")
 	}
 }
+
+func TestCacheRoundTrip(t *testing.T) {
+	snap := &snapshot{
+		exact: map[string]resourceEntry{
+			"plex.asdf.cafe":  {Backends: []backend{{Dial: "plex:32400"}}},
+			"cloud.asdf.cafe": {Backends: []backend{{Dial: "nextcloud:443", HTTPS: true}}},
+			"far.asdf.cafe":   {Remote: true},
+		},
+		wildcard: map[string]resourceEntry{
+			"wild.asdf.cafe": {Backends: []backend{{Dial: "wild:80"}}},
+		},
+	}
+	path := t.TempDir() + "/cache.json"
+	if err := saveSnapshotToDisk(path, snap); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadSnapshotFromDisk(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := got.lookup("cloud.asdf.cafe")
+	if !ok || !e.Backends[0].HTTPS || e.Backends[0].Dial != "nextcloud:443" {
+		t.Fatalf("bad https entry: %+v ok=%v", e, ok)
+	}
+	e, ok = got.lookup("far.asdf.cafe")
+	if !ok || !e.Remote || len(e.Backends) != 0 {
+		t.Fatalf("bad remote entry: %+v ok=%v", e, ok)
+	}
+	if e, ok = got.lookup("sub.wild.asdf.cafe"); !ok || e.Backends[0].Dial != "wild:80" {
+		t.Fatalf("bad wildcard entry: %+v ok=%v", e, ok)
+	}
+}
