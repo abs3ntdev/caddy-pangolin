@@ -29,6 +29,9 @@ xcaddy build \
   --with github.com/caddy-dns/cloudflare
 ```
 
+A prebuilt Docker image (hotio/caddy base with this plugin included) is
+published from [abs3ntdev/caddy-image](https://github.com/abs3ntdev/caddy-image).
+
 ## Pangolin setup
 
 1. Enable the Integration API (default port `3003`) and expose it to your LAN
