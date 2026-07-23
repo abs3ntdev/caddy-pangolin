@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/zap"
 )
 
@@ -161,5 +163,110 @@ func TestUnhealthyTargetsFiltered(t *testing.T) {
 	e, ok = snap.lookup("down.example.com")
 	if !ok || len(e.Backends) != 1 {
 		t.Fatalf("all-unhealthy resource should keep its backends: %+v ok=%v", e, ok)
+	}
+}
+
+func wildcardOrderServer(t *testing.T, wildcardFirst bool) *httptest.Server {
+	wildcard := `{"resourceId":1,"name":"Wild","fullDomain":"*.example.com","enabled":true,"mode":"http","wildcard":true,
+	 "targets":[{"targetId":10,"ip":"wild","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home"}]}`
+	exact := `{"resourceId":2,"name":"Apex","fullDomain":"example.com","enabled":true,"mode":"http",
+	 "targets":[{"targetId":20,"ip":"apex","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home"}]}`
+	resources := exact + "," + wildcard
+	if wildcardFirst {
+		resources = wildcard + "," + exact
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/org/default/resources", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"success":true,"data":{"resources":[%s],"pagination":{"total":2,"page":1,"pageSize":100}}}`, resources)
+	})
+	mux.HandleFunc("/v1/resource/", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"success":true,"data":{"targets":[]}}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestExplicitResourceBeatsWildcard(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	for _, wildcardFirst := range []bool{false, true} {
+		srv := wildcardOrderServer(t, wildcardFirst)
+		p := newPoller(Config{Endpoint: srv.URL, APIKey: "id.secret", OrgID: "default", Refresh: time.Hour}, zap.NewNop())
+		snap, err := p.fetch(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e, ok := snap.lookup("example.com"); !ok || e.Backends[0].Dial != "apex:80" {
+			t.Fatalf("wildcardFirst=%v: apex resolved to %+v, want apex:80", wildcardFirst, e)
+		}
+		if e, ok := snap.lookup("sub.example.com"); !ok || e.Backends[0].Dial != "wild:80" {
+			t.Fatalf("wildcardFirst=%v: subdomain resolved to %+v, want wild:80", wildcardFirst, e)
+		}
+	}
+}
+
+func TestBackendOrderStable(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	var calls atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/org/default/resources", func(w http.ResponseWriter, _ *http.Request) {
+		targets := `{"targetId":10,"ip":"a","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home"},
+			{"targetId":11,"ip":"b","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home"}`
+		if calls.Add(1)%2 == 0 {
+			targets = `{"targetId":11,"ip":"b","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home"},
+				{"targetId":10,"ip":"a","port":80,"enabled":true,"siteName":"Home","siteNiceId":"home"}`
+		}
+		fmt.Fprintf(w, `{"success":true,"data":{"resources":[
+			{"resourceId":1,"name":"App","fullDomain":"app.example.com","enabled":true,"mode":"http","targets":[%s]}
+		],"pagination":{"total":1,"page":1,"pageSize":100}}}`, targets)
+	})
+	mux.HandleFunc("/v1/resource/", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"success":true,"data":{"targets":[]}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	p := newPoller(Config{Endpoint: srv.URL, APIKey: "id.secret", OrgID: "default", Refresh: time.Hour}, zap.NewNop())
+	first, err := p.fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := p.fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.equal(second) {
+		t.Fatalf("snapshots differ on API target reordering: %+v vs %+v",
+			first.exact["app.example.com"], second.exact["app.example.com"])
+	}
+}
+
+func TestMetricsRecorded(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	registry := prometheus.NewPedanticRegistry()
+	if err := initMetrics(registry); err != nil {
+		t.Fatal(err)
+	}
+	if err := initMetrics(registry); err != nil {
+		t.Fatalf("re-registration should be tolerated: %v", err)
+	}
+
+	srv := fakePangolin(t)
+	p := newPoller(Config{Endpoint: srv.URL, APIKey: "id.secret", OrgID: "default", Refresh: time.Hour}, zap.NewNop())
+	p.refresh(context.Background())
+	srv.Close()
+	p.refresh(context.Background())
+
+	success := testutil.ToFloat64(pangolinMetrics.refreshTotal.WithLabelValues("default", "success"))
+	errors := testutil.ToFloat64(pangolinMetrics.refreshTotal.WithLabelValues("default", "error"))
+	if success < 1 {
+		t.Fatalf("success counter = %v, want >= 1", success)
+	}
+	if errors < 1 {
+		t.Fatalf("error counter = %v, want >= 1", errors)
+	}
+	hosts := testutil.ToFloat64(pangolinMetrics.mappedHosts.WithLabelValues("default", "exact"))
+	if hosts != 3 {
+		t.Fatalf("mapped_hosts exact = %v, want 3", hosts)
 	}
 }

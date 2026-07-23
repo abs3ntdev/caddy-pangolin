@@ -75,6 +75,9 @@ func (m *ModuleConfig) provision(ctx caddy.Context) error {
 		cfg.Refresh = 60 * time.Second
 	}
 	m.cfg = cfg
+	if err := initMetrics(ctx.GetMetricsRegistry()); err != nil {
+		return fmt.Errorf("registering metrics: %w", err)
+	}
 	var err error
 	m.poller, err = getPoller(ctx, cfg)
 	return err

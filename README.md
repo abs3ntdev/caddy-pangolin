@@ -152,6 +152,20 @@ so once the plugin has synced at least once:
 The cache is keyed by endpoint + org + sites, so config changes get a fresh
 cache rather than reusing a stale one.
 
+## Metrics
+
+When [Caddy metrics](https://caddyserver.com/docs/metrics) are enabled, the
+plugin exposes:
+
+| Metric | Type | Labels | Description |
+| --- | --- | --- | --- |
+| `caddy_pangolin_refresh_total` | counter | `org`, `outcome` | Refresh attempts by outcome (`success`/`error`) |
+| `caddy_pangolin_last_refresh_success_timestamp_seconds` | gauge | `org` | When the resource map was last refreshed successfully |
+| `caddy_pangolin_mapped_hosts` | gauge | `org`, `kind` | Hosts in the resource map (`exact`/`wildcard`) |
+
+Alerting on `time() - caddy_pangolin_last_refresh_success_timestamp_seconds`
+tells you when the map has gone stale (e.g. API unreachable).
+
 ## Behavior notes
 
 - Only enabled resources with enabled targets are mapped; disabled ones 404

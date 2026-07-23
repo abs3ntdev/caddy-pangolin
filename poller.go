@@ -96,11 +96,18 @@ type poller struct {
 	done   chan struct{}
 }
 
+// Config is the resolved configuration for a shared Pangolin poller.
+// Modules with identical configs share a single poller instance.
 type Config struct {
-	Endpoint           string
-	APIKey             string
-	OrgID              string
-	Refresh            time.Duration
+	// Endpoint is the base URL of the Pangolin integration API.
+	Endpoint string
+	// APIKey is the bearer token in the form "<id>.<secret>".
+	APIKey string
+	// OrgID is the Pangolin organization to list resources from.
+	OrgID string
+	// Refresh is the poll interval.
+	Refresh time.Duration
+	// InsecureSkipVerify disables TLS verification for API requests.
 	InsecureSkipVerify bool
 	// Sites restricts which Pangolin sites' targets are considered locally
 	// reachable. Matches site name or niceId, case-insensitive. Empty means
@@ -126,7 +133,8 @@ func (c Config) siteAllowed(name, niceID string) bool {
 }
 
 func (c Config) key() string {
-	return fmt.Sprintf("%s|%s|%s|%s|%v|%s|%s", c.Endpoint, c.APIKey, c.OrgID, c.Refresh, c.InsecureSkipVerify, strings.Join(c.Sites, ","), strings.Join(c.Resolvers, ","))
+	h := sha256.Sum256(fmt.Appendf(nil, "%s|%s|%s|%s|%v|%s|%s", c.Endpoint, c.APIKey, c.OrgID, c.Refresh, c.InsecureSkipVerify, strings.Join(c.Sites, ","), strings.Join(c.Resolvers, ",")))
+	return hex.EncodeToString(h[:])
 }
 
 func getPoller(ctx caddy.Context, cfg Config) (*poller, error) {
@@ -228,9 +236,11 @@ func (p *poller) current() *snapshot {
 func (p *poller) refresh(ctx context.Context) {
 	snap, err := p.fetch(ctx)
 	if err != nil {
+		recordRefresh(p.cfg.OrgID, nil)
 		p.logger.Error("failed to refresh resources from pangolin", zap.Error(err))
 		return
 	}
+	recordRefresh(p.cfg.OrgID, snap)
 	p.mu.Lock()
 	changed := !snap.equal(p.snap)
 	p.snap = snap
@@ -310,10 +320,12 @@ func (p *poller) fetch(ctx context.Context) (*snapshot, error) {
 
 	methods := p.targetMethods(ctx, all)
 
-	snap := &snapshot{
-		exact:    make(map[string]resourceEntry),
-		wildcard: make(map[string]resourceEntry),
+	type hostEntry struct {
+		host     string
+		wildcard bool
+		entry    resourceEntry
 	}
+	var entries []hostEntry
 	for _, r := range all {
 		if !r.Enabled || r.FullDomain == "" {
 			continue
@@ -346,16 +358,45 @@ func (p *poller) fetch(ctx context.Context) (*snapshot, error) {
 		if len(entry.Backends) == 0 && !entry.Remote {
 			continue
 		}
+		slices.SortFunc(entry.Backends, compareBackends)
 		host := strings.ToLower(r.FullDomain)
-		if r.Wildcard || strings.HasPrefix(host, "*.") {
-			snap.wildcard[strings.TrimPrefix(host, "*.")] = entry
+		entries = append(entries, hostEntry{
+			host:     strings.TrimPrefix(host, "*."),
+			wildcard: r.Wildcard || strings.HasPrefix(host, "*."),
+			entry:    entry,
+		})
+	}
+
+	snap := &snapshot{
+		exact:    make(map[string]resourceEntry),
+		wildcard: make(map[string]resourceEntry),
+	}
+	for _, e := range entries {
+		if e.wildcard {
+			snap.wildcard[e.host] = e.entry
+			snap.exact[e.host] = e.entry
 		}
-		snap.exact[strings.TrimPrefix(host, "*.")] = entry
-		if !strings.HasPrefix(host, "*.") {
-			snap.exact[host] = entry
+	}
+	for _, e := range entries {
+		if !e.wildcard {
+			snap.exact[e.host] = e.entry
 		}
 	}
 	return snap, nil
+}
+
+func compareBackends(a, b backend) int {
+	if c := strings.Compare(a.Dial, b.Dial); c != 0 {
+		return c
+	}
+	switch {
+	case a.HTTPS == b.HTTPS:
+		return 0
+	case b.HTTPS:
+		return -1
+	default:
+		return 1
+	}
 }
 
 // targetMethods returns the http/https method per target, fetching from the

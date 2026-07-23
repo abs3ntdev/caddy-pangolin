@@ -19,6 +19,7 @@ type Upstreams struct {
 	ModuleConfig
 }
 
+// CaddyModule returns the Caddy module information.
 func (Upstreams) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.reverse_proxy.upstreams.pangolin",
@@ -26,14 +27,18 @@ func (Upstreams) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
+// Provision implements caddy.Provisioner.
 func (u *Upstreams) Provision(ctx caddy.Context) error {
 	return u.provision(ctx)
 }
 
+// Cleanup implements caddy.CleanerUpper.
 func (u *Upstreams) Cleanup() error {
 	return u.cleanup()
 }
 
+// GetUpstreams implements reverseproxy.UpstreamSource by resolving the
+// request's host against the current Pangolin resource map.
 func (u *Upstreams) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
 	snap := u.poller.current()
 	if snap == nil {
@@ -53,6 +58,7 @@ func (u *Upstreams) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, err
 	return ups, nil
 }
 
+// UnmarshalCaddyfile implements caddyfile.Unmarshaler.
 func (u *Upstreams) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	return u.unmarshalCaddyfile(d)
 }
