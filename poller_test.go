@@ -21,6 +21,7 @@ func TestSnapshotLookup(t *testing.T) {
 		{"plex.example.com", "plex:32400", true},
 		{"PLEX.example.com:8443", "plex:32400", true},
 		{"plex.example.com.", "plex:32400", true},
+		{"plex.example.com.:443", "plex:32400", true},
 		{"example.org", "apex:80", true},
 		{"foo.wild.example.com", "wild:80", true},
 		{"missing.example.com", "", false},

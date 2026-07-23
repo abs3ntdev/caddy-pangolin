@@ -11,6 +11,7 @@ import (
 func init() {
 	caddy.RegisterModule(HTTPSBackendMatcher{})
 	caddy.RegisterModule(RemoteMatcher{})
+	caddy.RegisterModule(LocalMatcher{})
 }
 
 // HTTPSBackendMatcher matches requests whose Pangolin resource has at least
@@ -47,11 +48,7 @@ func (m *HTTPSBackendMatcher) Match(r *http.Request) bool {
 // MatchWithError reports whether the request's host maps to a Pangolin
 // resource with at least one locally reachable HTTPS target.
 func (m *HTTPSBackendMatcher) MatchWithError(r *http.Request) (bool, error) {
-	snap := m.poller.current()
-	if snap == nil {
-		return false, nil
-	}
-	entry, ok := snap.lookup(r.Host)
+	entry, ok, _ := m.poller.lookupRequest(r)
 	if !ok {
 		return false, nil
 	}
@@ -74,6 +71,39 @@ func (m *HTTPSBackendMatcher) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 // Pangolin instance.
 type RemoteMatcher struct {
 	ModuleConfig
+}
+
+type LocalMatcher struct {
+	ModuleConfig
+}
+
+func (LocalMatcher) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{
+		ID:  "http.matchers.pangolin_local",
+		New: func() caddy.Module { return new(LocalMatcher) },
+	}
+}
+
+func (m *LocalMatcher) Provision(ctx caddy.Context) error {
+	return m.provision(ctx)
+}
+
+func (m *LocalMatcher) Cleanup() error {
+	return m.cleanup()
+}
+
+func (m *LocalMatcher) Match(r *http.Request) bool {
+	ok, _ := m.MatchWithError(r)
+	return ok
+}
+
+func (m *LocalMatcher) MatchWithError(r *http.Request) (bool, error) {
+	entry, ok, _ := m.poller.lookupRequest(r)
+	return ok && len(entry.Backends) > 0, nil
+}
+
+func (m *LocalMatcher) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	return m.unmarshalCaddyfile(d)
 }
 
 // CaddyModule returns the Caddy module information.
@@ -103,11 +133,7 @@ func (m *RemoteMatcher) Match(r *http.Request) bool {
 // MatchWithError reports whether the request's host maps to a Pangolin
 // resource that has no locally reachable targets.
 func (m *RemoteMatcher) MatchWithError(r *http.Request) (bool, error) {
-	snap := m.poller.current()
-	if snap == nil {
-		return false, nil
-	}
-	entry, ok := snap.lookup(r.Host)
+	entry, ok, _ := m.poller.lookupRequest(r)
 	if !ok {
 		return false, nil
 	}
@@ -120,12 +146,16 @@ func (m *RemoteMatcher) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 }
 
 var (
-	_ caddy.Provisioner        = (*HTTPSBackendMatcher)(nil)
-	_ caddy.CleanerUpper       = (*HTTPSBackendMatcher)(nil)
-	_ caddyhttp.RequestMatcher = (*HTTPSBackendMatcher)(nil)
-	_ caddyfile.Unmarshaler    = (*HTTPSBackendMatcher)(nil)
-	_ caddy.Provisioner        = (*RemoteMatcher)(nil)
-	_ caddy.CleanerUpper       = (*RemoteMatcher)(nil)
-	_ caddyhttp.RequestMatcher = (*RemoteMatcher)(nil)
-	_ caddyfile.Unmarshaler    = (*RemoteMatcher)(nil)
+	_ caddy.Provisioner                 = (*HTTPSBackendMatcher)(nil)
+	_ caddy.CleanerUpper                = (*HTTPSBackendMatcher)(nil)
+	_ caddyhttp.RequestMatcherWithError = (*HTTPSBackendMatcher)(nil)
+	_ caddyfile.Unmarshaler             = (*HTTPSBackendMatcher)(nil)
+	_ caddy.Provisioner                 = (*RemoteMatcher)(nil)
+	_ caddy.CleanerUpper                = (*RemoteMatcher)(nil)
+	_ caddyhttp.RequestMatcherWithError = (*RemoteMatcher)(nil)
+	_ caddyfile.Unmarshaler             = (*RemoteMatcher)(nil)
+	_ caddy.Provisioner                 = (*LocalMatcher)(nil)
+	_ caddy.CleanerUpper                = (*LocalMatcher)(nil)
+	_ caddyhttp.RequestMatcherWithError = (*LocalMatcher)(nil)
+	_ caddyfile.Unmarshaler             = (*LocalMatcher)(nil)
 )

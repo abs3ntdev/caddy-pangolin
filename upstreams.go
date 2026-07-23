@@ -40,19 +40,25 @@ func (u *Upstreams) Cleanup() error {
 // GetUpstreams implements reverseproxy.UpstreamSource by resolving the
 // request's host against the current Pangolin resource map.
 func (u *Upstreams) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
-	snap := u.poller.current()
-	if snap == nil {
-		return nil, fmt.Errorf("pangolin resource map not loaded yet")
-	}
-	entry, ok := snap.lookup(r.Host)
+	entry, ok, loaded := u.poller.lookupRequest(r)
 	if !ok {
+		if !loaded {
+			return nil, fmt.Errorf("pangolin resource map not loaded yet")
+		}
 		return nil, fmt.Errorf("no pangolin resource for host %q", r.Host)
 	}
 	if len(entry.Backends) == 0 {
 		return nil, fmt.Errorf("no locally reachable targets for host %q (remote site)", r.Host)
 	}
 	ups := make([]*reverseproxy.Upstream, 0, len(entry.Backends))
+	preferHTTPS := false
 	for _, b := range entry.Backends {
+		preferHTTPS = preferHTTPS || b.HTTPS
+	}
+	for _, b := range entry.Backends {
+		if b.HTTPS != preferHTTPS {
+			continue
+		}
 		ups = append(ups, &reverseproxy.Upstream{Dial: b.Dial})
 	}
 	return ups, nil

@@ -146,7 +146,10 @@ func TestUnhealthyTargetsFiltered(t *testing.T) {
 		],"pagination":{"total":2,"page":1,"pageSize":100}}}`)
 	})
 	mux.HandleFunc("/v1/resource/", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"success":true,"data":{"targets":[]}}`)
+		fmt.Fprint(w, `{"success":true,"data":{"targets":[
+			{"targetId":10,"method":"http"},{"targetId":11,"method":"http"},
+			{"targetId":20,"method":"http"}
+		]}}`)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -180,7 +183,9 @@ func wildcardOrderServer(t *testing.T, wildcardFirst bool) *httptest.Server {
 		fmt.Fprintf(w, `{"success":true,"data":{"resources":[%s],"pagination":{"total":2,"page":1,"pageSize":100}}}`, resources)
 	})
 	mux.HandleFunc("/v1/resource/", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"success":true,"data":{"targets":[]}}`)
+		fmt.Fprint(w, `{"success":true,"data":{"targets":[
+			{"targetId":10,"method":"http"},{"targetId":20,"method":"http"}
+		]}}`)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -221,7 +226,9 @@ func TestBackendOrderStable(t *testing.T) {
 		],"pagination":{"total":1,"page":1,"pageSize":100}}}`, targets)
 	})
 	mux.HandleFunc("/v1/resource/", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"success":true,"data":{"targets":[]}}`)
+		fmt.Fprint(w, `{"success":true,"data":{"targets":[
+			{"targetId":10,"method":"http"},{"targetId":11,"method":"http"}
+		]}}`)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -257,15 +264,16 @@ func TestMetricsRecorded(t *testing.T) {
 	srv.Close()
 	p.refresh(context.Background())
 
-	success := testutil.ToFloat64(pangolinMetrics.refreshTotal.WithLabelValues("default", "success"))
-	errors := testutil.ToFloat64(pangolinMetrics.refreshTotal.WithLabelValues("default", "error"))
+	configID := p.cfg.metricID()
+	success := testutil.ToFloat64(pangolinMetrics.refreshTotal.WithLabelValues("default", configID, "success"))
+	errors := testutil.ToFloat64(pangolinMetrics.refreshTotal.WithLabelValues("default", configID, "error"))
 	if success < 1 {
 		t.Fatalf("success counter = %v, want >= 1", success)
 	}
 	if errors < 1 {
 		t.Fatalf("error counter = %v, want >= 1", errors)
 	}
-	hosts := testutil.ToFloat64(pangolinMetrics.mappedHosts.WithLabelValues("default", "exact"))
+	hosts := testutil.ToFloat64(pangolinMetrics.mappedHosts.WithLabelValues("default", configID, "exact"))
 	if hosts != 3 {
 		t.Fatalf("mapped_hosts exact = %v, want 3", hosts)
 	}

@@ -3,6 +3,8 @@ package caddypangolin
 import (
 	"fmt"
 	"net"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,10 +26,14 @@ type ModuleConfig struct {
 	OrgID string `json:"org_id,omitempty"`
 
 	// How often to refresh the resource map. Default: 60s.
-	Refresh caddy.Duration `json:"refresh,omitempty"`
+	Refresh        caddy.Duration `json:"refresh,omitempty"`
+	MethodRefresh  caddy.Duration `json:"method_refresh,omitempty"`
+	MaxStale       caddy.Duration `json:"max_stale,omitempty"`
+	InitialTimeout caddy.Duration `json:"initial_timeout,omitempty"`
 
 	// Skip TLS verification when talking to the Pangolin API.
 	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`
+	AllowHTTP          bool `json:"allow_http,omitempty"`
 
 	// Sites whose targets are locally reachable (name or niceId,
 	// case-insensitive). Targets on other sites are treated as remote.
@@ -44,43 +50,89 @@ type ModuleConfig struct {
 }
 
 func (m *ModuleConfig) provision(ctx caddy.Context) error {
+	cfg, err := m.resolvedConfig()
+	if err != nil {
+		return err
+	}
+	m.cfg = cfg
+	if err := initMetrics(ctx.GetMetricsRegistry()); err != nil {
+		return fmt.Errorf("registering metrics: %w", err)
+	}
+	m.poller, err = getPoller(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if err := m.poller.waitReady(cfg.InitialTimeout); err != nil {
+		releasePoller(cfg)
+		m.poller = nil
+		return err
+	}
+	return nil
+}
+
+func (m *ModuleConfig) resolvedConfig() (Config, error) {
 	repl := caddy.NewReplacer()
 	cfg := Config{
 		Endpoint:           repl.ReplaceAll(m.Endpoint, ""),
 		APIKey:             repl.ReplaceAll(m.APIKey, ""),
 		OrgID:              repl.ReplaceAll(m.OrgID, ""),
 		Refresh:            time.Duration(m.Refresh),
+		MethodRefresh:      time.Duration(m.MethodRefresh),
+		MaxStale:           time.Duration(m.MaxStale),
+		InitialTimeout:     time.Duration(m.InitialTimeout),
 		InsecureSkipVerify: m.InsecureSkipVerify,
+		AllowHTTP:          m.AllowHTTP,
 	}
 	for _, s := range m.Sites {
-		cfg.Sites = append(cfg.Sites, repl.ReplaceAll(s, ""))
+		s = strings.ToLower(strings.TrimSpace(repl.ReplaceAll(s, "")))
+		if s != "" && !slices.Contains(cfg.Sites, s) {
+			cfg.Sites = append(cfg.Sites, s)
+		}
 	}
+	slices.Sort(cfg.Sites)
 	for _, raw := range m.Resolvers {
 		r, err := normalizeResolver(repl.ReplaceAll(raw, ""))
 		if err != nil {
-			return fmt.Errorf("invalid resolver %q: %w", raw, err)
+			return Config{}, fmt.Errorf("invalid resolver %q: %w", raw, err)
 		}
-		cfg.Resolvers = append(cfg.Resolvers, r)
+		if !slices.Contains(cfg.Resolvers, r) {
+			cfg.Resolvers = append(cfg.Resolvers, r)
+		}
 	}
+	slices.Sort(cfg.Resolvers)
 	if cfg.Endpoint == "" {
-		return fmt.Errorf("endpoint is required")
+		return Config{}, fmt.Errorf("endpoint is required")
 	}
 	if cfg.APIKey == "" {
-		return fmt.Errorf("api_key is required")
+		return Config{}, fmt.Errorf("api_key is required")
 	}
 	if cfg.OrgID == "" {
-		return fmt.Errorf("org_id is required")
+		return Config{}, fmt.Errorf("org_id is required")
 	}
+	parsedEndpoint, err := url.Parse(cfg.Endpoint)
+	if err != nil || parsedEndpoint.Host == "" {
+		return Config{}, fmt.Errorf("endpoint must be an absolute URL")
+	}
+	if parsedEndpoint.Scheme != "https" && (parsedEndpoint.Scheme != "http" || !cfg.AllowHTTP) {
+		return Config{}, fmt.Errorf("endpoint must use https (set allow_http to explicitly permit http)")
+	}
+	if parsedEndpoint.User != nil || parsedEndpoint.RawQuery != "" || parsedEndpoint.Fragment != "" {
+		return Config{}, fmt.Errorf("endpoint must not contain user info, a query, or a fragment")
+	}
+	cfg.Endpoint = strings.TrimSuffix(parsedEndpoint.String(), "/")
 	if cfg.Refresh <= 0 {
 		cfg.Refresh = 60 * time.Second
 	}
-	m.cfg = cfg
-	if err := initMetrics(ctx.GetMetricsRegistry()); err != nil {
-		return fmt.Errorf("registering metrics: %w", err)
+	if cfg.MethodRefresh <= 0 {
+		cfg.MethodRefresh = 5 * time.Minute
 	}
-	var err error
-	m.poller, err = getPoller(ctx, cfg)
-	return err
+	if cfg.MaxStale < 0 {
+		return Config{}, fmt.Errorf("max_stale must not be negative")
+	}
+	if cfg.InitialTimeout < 0 {
+		return Config{}, fmt.Errorf("initial_timeout must not be negative")
+	}
+	return cfg, nil
 }
 
 func normalizeResolver(value string) (string, error) {
@@ -145,6 +197,36 @@ func (m *ModuleConfig) unmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.Errf("parsing refresh duration: %v", err)
 			}
 			m.Refresh = caddy.Duration(dur)
+		case "method_refresh":
+			var v string
+			if !d.AllArgs(&v) {
+				return d.ArgErr()
+			}
+			dur, err := caddy.ParseDuration(v)
+			if err != nil {
+				return d.Errf("parsing method refresh duration: %v", err)
+			}
+			m.MethodRefresh = caddy.Duration(dur)
+		case "max_stale":
+			var v string
+			if !d.AllArgs(&v) {
+				return d.ArgErr()
+			}
+			dur, err := caddy.ParseDuration(v)
+			if err != nil {
+				return d.Errf("parsing max stale duration: %v", err)
+			}
+			m.MaxStale = caddy.Duration(dur)
+		case "initial_timeout":
+			var v string
+			if !d.AllArgs(&v) {
+				return d.ArgErr()
+			}
+			dur, err := caddy.ParseDuration(v)
+			if err != nil {
+				return d.Errf("parsing initial timeout duration: %v", err)
+			}
+			m.InitialTimeout = caddy.Duration(dur)
 		case "sites":
 			args := d.RemainingArgs()
 			if len(args) == 0 {
@@ -162,6 +244,11 @@ func (m *ModuleConfig) unmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.ArgErr()
 			}
 			m.InsecureSkipVerify = true
+		case "allow_http":
+			if d.NextArg() {
+				return d.ArgErr()
+			}
+			m.AllowHTTP = true
 		default:
 			return d.Errf("unrecognized option '%s'", d.Val())
 		}
