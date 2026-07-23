@@ -5,13 +5,16 @@ Caddy plugin that lets a local Caddy instance mirror the resources of a remote
 your services directly without hairpinning traffic through your VPS
 (see [fosrl discussion #685](https://github.com/orgs/fosrl/discussions/685)).
 
-It provides two modules:
+It provides three modules:
 
 - `http.reverse_proxy.upstreams.pangolin` — a [dynamic upstreams](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#dynamic-upstreams)
   source that resolves the backend for each request by matching the request `Host`
   against Pangolin's resource `fullDomain`s and their targets (`ip:port`).
 - `http.matchers.pangolin_https_backend` — a request matcher that matches hosts
   whose Pangolin target uses `https`, so you can route them through a TLS transport.
+- `http.matchers.pangolin_remote` — a request matcher that matches hosts that
+  exist in Pangolin but have no locally reachable targets, so you can route them
+  back through the public Pangolin instance (see [Remote sites](#remote-sites)).
 
 A background poller fetches `GET /v1/org/{org}/resources` (plus per-resource
 targets for the http/https method) from Pangolin's Integration API and caches
