@@ -113,13 +113,14 @@ everything else back through the public Pangolin instance:
 }
 
 *.example.com {
+	# resources on remote sites: send back out through the public path
 	@remote pangolin_remote {
 		import pangolin_cfg
 	}
-	reverse_proxy @remote https://<vps-ip> {
+	reverse_proxy @remote {http.request.host}:443 {
 		transport http {
 			tls
-			tls_server_name {http.request.host}
+			resolvers 1.1.1.1 8.8.8.8
 		}
 	}
 
@@ -132,9 +133,24 @@ everything else back through the public Pangolin instance:
 ```
 
 `pangolin_remote` matches hosts that exist in Pangolin but have no locally
-reachable targets. Requests are proxied to Pangolin's edge with SNI set to the
-original host so traefik routes and terminates them normally (auth rules
-included, since the request goes through the real Pangolin path).
+reachable targets. Matched requests are proxied back to the original hostname,
+but resolved with public DNS servers (`resolvers`) instead of your local
+split-horizon DNS — which would otherwise point the name right back at this
+Caddy instance and loop. The request therefore takes the normal public route
+(Cloudflare, your VPS, Pangolin's traefik), with correct SNI and Host for free,
+and Pangolin's auth rules still apply since it goes through the real path.
+
+Alternatively, if you'd rather not depend on outbound DNS, you can pin the
+upstream to your VPS directly and override the SNI:
+
+```caddyfile
+	reverse_proxy @remote https://<vps-ip> {
+		transport http {
+			tls
+			tls_server_name {http.request.host}
+		}
+	}
+```
 
 ## Offline resilience
 
